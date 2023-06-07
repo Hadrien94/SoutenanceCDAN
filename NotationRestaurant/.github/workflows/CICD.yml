@@ -1,0 +1,67 @@
+name: CICD
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  symfony-tests:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:latest
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: main
+        ports:
+            - '3306:3306'
+    steps:
+    - uses: actions/checkout@v2
+    #- name: set up PHP avec la CI
+      #uses: shivammathur/setup-php@v2
+    #- name: Copy .env.test.local
+    #  run: php -r "file_exists('.env.test.local') || copy('.env.test', '.env.test.local');"
+    - name: Cache Composer packages
+      id: composer-cache
+      uses: actions/cache@v2
+      with:
+        path: vendor
+        key: ${{ runner.os }}-php-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-php-
+    - name: Install Dependencies
+      run: composer install -q --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist
+      
+    - name: Install and Run NPM
+      run: npm install && npm run build
+      
+    - name: Security Check
+      uses: docker://jakzal/phpqa:php7.4
+      with:
+        args: local-php-security-checker
+      
+    - name: PHP-CS-Fixer
+      uses: docker://jakzal/phpqa:php7.4
+      with:
+        args: phpcs -v --standard=PSR12 --ignore=./src/Kernel.php ./src
+      
+    - name: PHP Stan
+      uses: docker://jakzal/phpqa:php7.4
+      with:
+        args: phpstan analyse ./src
+    
+    - name: twig-lint
+      uses: docker://jakzal/phpqa:php7.4
+      with:
+        args: twig-lint lint ./templates
+        
+    - name: PHPUnit
+      env:
+        DATABASE_URL: mysql://root:password@127.0.0.1:3306/main?serverVersion=5.7
+      run: |
+        php bin/console d:d:c --if-not-exists --env=test
+        php bin/console d:m:m -n --env=test
+        php bin/console d:f:l -n --env=test
+        SYMFONY_DEPRECATIONS_HELPER=disabled vendor/bin/phpunit
